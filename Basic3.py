@@ -12,6 +12,7 @@ from matplotlib.lines import Line2D
 import matplotlib
 import matplotlib.cm as cm
 import warnings
+import os
 
 # ------------------------------
 # 0. Stop warnings
@@ -22,8 +23,10 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ------------------------------
 # 1. Load data
 # ------------------------------
-data_countries = pd.read_csv("Data_countries.csv") # Data for countries
-data_regions = pd.read_csv("Data_regions.csv") # Data for regions
+data_dir = "C:/Users/padil/Documents/TDA/DATA/"
+
+data_countries = pd.read_csv(os.path.join(data_dir, "Data_countries.csv")) # Data for countries
+data_regions = pd.read_csv(os.path.join(data_dir, "Data_regions.csv")) # Data for regions
 world_regions = pd.read_csv("world_regions.csv") # Map of countries into regions
 
 # ------------------------------
