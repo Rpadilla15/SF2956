@@ -40,7 +40,10 @@ indicators = {
     #'SI.POV.GINI': 'gini',
     'SI.POV.DDAY': 'poverty',
     'SP.POP.GROW': 'pop_growth',
-    'EG.ELC.ACCS.ZS': 'electricity_access'
+    'EG.ELC.ACCS.ZS': 'electricity_access',
+    'SM.POP.NETM': 'migration',
+    'NV.AGR.TOTL.ZS': 'agriculture_weight_GDP',
+    'SE.XPD.TOTL.GD.ZS': 'education spending'
 }
 
 # ------------------------------

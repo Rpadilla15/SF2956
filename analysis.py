@@ -34,9 +34,18 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 # ------------------------------
 data_dir = "C:/Users/padil/Documents/TDA/DATA/"
 
-data_countries = pd.read_csv(os.path.join(data_dir, "Data_countries.csv")) # Data for countries
-data_regions = pd.read_csv(os.path.join(data_dir, "Data_regions.csv")) # Data for regions
+data_countries = pd.read_csv(os.path.join(data_dir, "Data_countries_extended.csv")) # Data for countries
+data_regions = pd.read_csv(os.path.join(data_dir, "Data_regions_extended.csv")) # Data for regions
 world_regions_latest = pd.read_csv(os.path.join(data_dir,"clean_world_regions.csv")) # Map of countries into regions
+happiness_raw = pd.read_csv(os.path.join(data_dir,"Happiness_data.csv"), encoding='latin-1') 
+democracy_raw = pd.read_csv(os.path.join(data_dir,"democracy-index-eiu.csv"), ) 
+
+
+democracy = democracy_raw.loc[democracy_raw['Code'].notna() & (democracy_raw['Year'] == 2024.0)].copy()
+democracy['Democracy'] = pd.cut(x=democracy['Democracy index'], bins=[0, 4, 6, 8, 10],
+                     labels=[0,1,2,3])
+democracy['Democracy label'] = pd.cut(x=democracy['Democracy index'], bins=[0, 4, 6, 8, 10],
+                     labels=[ "authoritarian regime", "hybrid regime", "flawed democracy","full democracy"])
 
 # ------------------------------
 # 2. Mappings
@@ -52,7 +61,10 @@ indicators = {
     #'SI.POV.GINI': 'gini',
     'SI.POV.DDAY': 'poverty',
     'SP.POP.GROW': 'pop_growth',
-    'EG.ELC.ACCS.ZS': 'electricity_access'
+    'EG.ELC.ACCS.ZS': 'electricity_access',
+    'SM.POP.NETM': 'migration',
+    'NV.AGR.TOTL.ZS': 'agriculture_weight_GDP',
+    'SE.XPD.TOTL.GD.ZS': 'education spending'
 }
 
 wb_region_map = {
@@ -68,7 +80,7 @@ wb_region_map = {
 # ------------------------------
 # 3. Build data matrix by filling empty indicators and dropping non-filled enough countries
 # ------------------------------
-calculations = ['median']
+calculations = ['median', 'net_change']
 
 # Country level data
 data_wide = summarize_data_wide(data_countries, indicators, calculations)
@@ -85,7 +97,26 @@ data_wide_full = input_missing_data(data_wide, data_region_wide)
 if 'gdp_per_capita' in data_wide_full.columns: # Log-transform GDP per capita safely
     data_wide_full['gdp_per_capita'] = data_wide_full['gdp_per_capita'].apply(lambda x: np.log10(x) if x>0 else np.nan)
 
-X, countries, regions = standardize(data_wide_full)
+analysis_type = 1
+if analysis_type==0:
+    X, countries, regions = standardize(data_wide_full)
+
+else:
+    democracy_scores = democracy[['Code', 'Democracy', 'Democracy label']]
+
+    democracy_data = data_wide_full.merge(
+        democracy_scores,
+        left_on='Country Code',  # Column from data_wide_full
+        right_on='Code', # Column from happiness_scores
+        how='inner'
+    )
+    label_dem = democracy_data['Democracy'].values
+    dem_names = democracy_data['Democracy label'].values
+    democracy_data['region'] = democracy_data['Democracy label']
+    democracy_data = democracy_data.drop(columns=['Code', 'Democracy', 'Democracy label'])
+    data_wide_full = democracy_data.copy()
+    X, countries, regions = standardize(democracy_data)
+    regions = dem_names
 
 
 
@@ -103,6 +134,10 @@ for region in unique_regions:
     if region in ["East Asia & Pacific", "Latin America & Caribbean", "Middle East, North Africa, Afghanistan & Pakistan", "South Asia", "Sub-Saharan Africa"]:
         hemisphere_colors[region] = "black"
     elif region in ["Europe & Central Asia", "North America"]:
+        hemisphere_colors[region] = "red"
+    elif region in ["authoritarian regime", "hybrid regime"]:
+        hemisphere_colors[region] = "black"
+    elif region in ["flawed democracy","full democracy"]:
         hemisphere_colors[region] = "red"
     else:
         # fallback (optional)
@@ -161,13 +196,20 @@ for metric in metrics:
         return f
 
     distributions = {
-        "0_50": uniform_distribution_interval(0, 50),
-        "25_75": uniform_distribution_interval(25, 75),
-        "50_100": uniform_distribution_interval(50, 100),
-        "75_125": uniform_distribution_interval(75, 125),
-        "100_150": uniform_distribution_interval(100, 150),
-        "125_175": uniform_distribution_interval(125, 175),
-        "150_200": uniform_distribution_interval(150, 200),
+        # "0_50": uniform_distribution_interval(0, 50),
+        # "25_75": uniform_distribution_interval(25, 75),
+        # "50_100": uniform_distribution_interval(50, 100),
+        # "75_125": uniform_distribution_interval(75, 125),
+        # "100_150": uniform_distribution_interval(100, 150),
+        # "125_175": uniform_distribution_interval(125, 175),
+        # "150_200": uniform_distribution_interval(150, 200),
+
+        "0_4": uniform_distribution_interval(0, 4),
+        "2_6": uniform_distribution_interval(2, 6),
+        "4_8": uniform_distribution_interval(4, 8),
+        "6_10": uniform_distribution_interval(6, 10),
+        "8_12": uniform_distribution_interval(8, 12),
+        "10_14": uniform_distribution_interval(10, 14),
     }
 
     number_instances = 100    # number of random samples per base point
@@ -225,10 +267,10 @@ for metric in metrics:
     plt.ylabel("Count")
     plt.title("Stable Rank and Betti Curves for H0 and H1")
     plt.legend()
-    #plt.show()
+    plt.show()
 
 
-# --- Distributions ---
+    # --- Distributions ---
     distribution_names = list(distributions.keys())
     n_distributions = len(distribution_names)
     number_samples = len(regions)
@@ -242,7 +284,6 @@ for metric in metrics:
     }
     homology_labels = ['H0', 'H1', 'Betti0', 'Betti1']
 
-    """
     # --- Initial settings ---
     current_homology = 'H1'
     current_distribution = 0  # index into distribution_names
@@ -305,6 +346,7 @@ for metric in metrics:
         if current_homology in ['H1', 'Betti1']:
             ax.set_xscale('log')
             ax.set_xlim(np.min(t_plot), np.max(t_plot))  # use t_plot for log
+            pass
         else:
             ax.set_xscale('linear')
             if current_homology in ['H0']:
@@ -330,20 +372,7 @@ for metric in metrics:
     legend_elements = [Line2D([0],[0], color=hemisphere_colors[r], lw=2, label=r) for r in unique_regions]
     ax.legend(handles=legend_elements, title="Regions", bbox_to_anchor=(1.05,1), loc='upper left')
 
-    #plt.show()
-
-
-
-
-
-
-
-
-
-
-
-
-
+    plt.show()
 
 
     # ---------------------------------------------------------------------
@@ -367,7 +396,7 @@ for metric in metrics:
         ax = plt.gca()
         for lbl in ax.get_xmajorticklabels():
             country_name = lbl.get_text()
-            region = data_wide.loc[data_wide['Country Name'] == country_name, 'region'].values[0]
+            region = data_wide_full.loc[data_wide_full['Country Name'] == country_name, 'region'].values[0]
             lbl.set_color(region_colors.get(region, 'black'))
 
         handles = [ # Legend for label colors beneath dendrogram
@@ -388,4 +417,4 @@ for metric in metrics:
         # Optional: save to PDF for a full-page view
         #plt.savefig(f"Dendrogram_{metric}_{method}.pdf", bbox_inches='tight')
 
-        plt.show()"""
+        plt.show()

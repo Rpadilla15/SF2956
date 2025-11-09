@@ -3,69 +3,125 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from typing import Dict, List, Callable, Union
 
+
 def calculate_indicator_summary(
     df: pd.DataFrame, 
     indicators: Dict[str, str], 
     calculations: Union[str, List[str]] = 'median'
 ) -> pd.DataFrame:
     """
-    Calculates summary statistics (like median, mean, etc.) across year columns 
+    Calculates summary or change-based metrics across year columns 
     for specific indicators in a country data DataFrame.
 
+    Added 'net_change', 'pct_change', and 'trend_slope' as informative
+    single-point change metrics.
+
     Args:
-        df: The input DataFrame containing country and indicator data. 
-        indicators: A dictionary mapping 'Series Code' (key) to a 
-            descriptive indicator name (value).
+        df: The input DataFrame containing country and indicator data.
+        indicators: A dictionary mapping 'Series Code' (key) to 
+            descriptive indicator names (value).
         calculations: A string or list of strings specifying the calculations 
-                      to perform (e.g., 'median', 'mean', 'min'). 
-                      Uses 'median' by default.
+                      to perform (e.g., 'median', 'mean', 'net_change').
+                      Defaults to 'median'.
 
     Returns:
-        A DataFrame containing for the summarized data.
+        A DataFrame summarizing the indicator data.
     """
     country_data = df[df['Series Code'].isin(indicators.keys())].copy()
     year_cols = country_data.columns[4:]
-    country_data[year_cols] = country_data[year_cols].apply(
-        pd.to_numeric, 
-        errors='coerce'
-    )
-    
+    country_data[year_cols] = country_data[year_cols].apply(pd.to_numeric, errors='coerce')
 
-    # --- SUMMARIZING THE DATA ---
     if isinstance(calculations, str):
         calculations = [calculations]
 
+    # --- Calculation functions ---
+    def net_change(x):
+        non_nan = x.dropna()
+        if len(non_nan) < 2:
+            return None
+        return non_nan.iloc[-1] - non_nan.iloc[0]
+
+    def pct_change(x):
+        non_nan = x.dropna()
+        if len(non_nan) < 2:
+            return None
+        first, last = non_nan.iloc[0], non_nan.iloc[-1]
+        return (last - first) / first if first != 0 else None
+
+    # --- Calculation map ---
     calc_map: Dict[str, Callable] = {
         'median': lambda df: df.median(axis=1),
         'mean': lambda df: df.mean(axis=1),
         'min': lambda df: df.min(axis=1),
         'max': lambda df: df.max(axis=1),
+        'variance': lambda df: df.var(axis=1, ddof=1),
+        'net_change': lambda df: df.apply(net_change, axis=1),
+        'pct_change': lambda df: df.apply(pct_change, axis=1),
     }
 
+    # --- Compute requested metrics ---
     results = []
-
     for calc_name in calculations:
         if calc_name not in calc_map:
             print(f"Warning: Calculation type '{calc_name}' not supported. Skipping.")
             continue
-            
-        # Calculation across the year columns (axis=1)
+
         calculated_values = calc_map[calc_name](country_data[year_cols])
-        
-        # Create the result DataFrame slice for this calculation
-        result_df = country_data[['Country Name', 'Country Code','Series Code']].copy()
+        result_df = country_data[['Country Name', 'Country Code', 'Series Code']].copy()
         result_df['value'] = calculated_values
-        result_df['calculation_type'] = calc_name # The new calculation column
-        
+        result_df['calculation_type'] = calc_name
         results.append(result_df)
-        
+
     summary_df = pd.concat(results, ignore_index=True)
     summary_df['indicator'] = summary_df['Series Code'].map(indicators)
-    if len(calculations)>1:
+    if len(calculations) > 1:
         summary_df['indicator'] = summary_df[['indicator', 'calculation_type']].agg('-'.join, axis=1)
-    
+
     return summary_df
 
+
+def filter_indicators_by_nan_rate(df: pd.DataFrame, 
+                                  min_valid_country_ratio: float = 0.6) -> pd.DataFrame:
+    """
+    Filters out indicators (Series Code) with too many NaNs across countries.
+
+    Keeps only those where at least `min_valid_country_ratio` of countries
+    have at least one non-NaN value among the year columns.
+
+    Args:
+        df: WDI-style DataFrame with columns like 
+            ['Country Name', 'Country Code', 'Series Name', 'Series Code', <year columns>].
+        min_valid_country_ratio: Minimum proportion of countries required
+                                 to have valid data for an indicator.
+
+    Returns:
+        Filtered DataFrame containing only indicators with enough data.
+    """
+    # Identify the year columns
+    year_cols = df.columns[4:]
+    df[year_cols] = df[year_cols].apply(pd.to_numeric, errors='coerce')
+
+    # Count per indicator: how many countries have any valid year
+    valid_counts = (
+        df.groupby('Series Code')[year_cols]
+        .apply(lambda x: x.notna().any(axis=1).sum())
+    )
+
+    # Total number of countries represented per indicator
+    total_counts = df.groupby('Series Code')['Country Name'].nunique()
+
+    # Compute the ratio of valid countries
+    valid_ratio = valid_counts / total_counts
+
+    # Filter indicators
+    valid_indicators = valid_ratio[valid_ratio >= min_valid_country_ratio].index
+
+    filtered_df = df[df['Series Code'].isin(valid_indicators)].copy()
+
+    print(f"Kept {len(valid_indicators)} of {df['Series Code'].nunique()} indicators "
+          f"({len(valid_indicators)/df['Series Code'].nunique():.1%}).")
+
+    return filtered_df
 
 def summarize_data_wide(df: pd.DataFrame, 
     indicators: Dict[str, str], 
